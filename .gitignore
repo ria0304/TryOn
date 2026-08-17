@@ -1,0 +1,29 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+!backend/.env.example
+
+# Python backend
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/storage/uploads/*
+backend/storage/cutouts/*
+!backend/storage/uploads/.gitkeep
+!backend/storage/cutouts/.gitkeep
+
+# Photorealistic try-on: CatVTON code is a git submodule (see .gitmodules),
+# so it's tracked via submodule reference, not ignored here. Downloaded
+# weights (~/.cache/huggingface) and generated results are still large and
+# machine-specific — never commit those.
+backend/storage/tryon_results/*
+!backend/storage/tryon_results/.gitkeep
+# Bundled stand-in model photos ARE meant to be committed (small, few files)
+# so clone-and-run works without a manual copy step — see CATVTON_SETUP.md.
+!backend/third_party/standin_models/
