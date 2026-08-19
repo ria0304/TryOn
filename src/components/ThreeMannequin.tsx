@@ -80,7 +80,12 @@ function bodyHalfWidth(y: number, p: Proportions): number {
   const pts: Array<[number, number]> = [
     [BODY.footY, 0.07],
     [BODY.legBaseY, 0.16],
-    ...torsoProfilePoints(p),
+    // torsoProfilePoints returns [radius, y] pairs (that's what LatheGeometry
+    // wants for the actual torso mesh below) -- but every other point in
+    // this array is [y, width]. Swap here so bodyHalfWidth's own convention
+    // stays consistent; without this swap, the hip-to-shoulder band gets
+    // width and height crossed, producing wildly oversized garment radii.
+    ...torsoProfilePoints(p).map(([r, y]) => [y, r] as [number, number]),
     [BODY.neckY, p.neckR],
     [BODY.headY, p.headR],
     [BODY.headTopY, 0.05],
@@ -144,52 +149,105 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 // Sample the garment texture's alpha silhouette -> normalized left/right
-// column fractions (0..1) per row. Returns null when the image can't be read
-// (falls back to a plain rectangle).
+// column fractions (0..1) per row. Returns a procedural silhouette based on
+// garment category when the image can't be read (CORS, not loaded, etc.),
+// ensuring the garment always wraps around the mannequin.
 function sampleSilhouette(
   texture: THREE.Texture,
-  maxDim = 220
-): { rows: number; left: Float32Array; right: Float32Array } | null {
+  maxDim = 220,
+  category: Category = 'top'
+): { rows: number; left: Float32Array; right: Float32Array } {
   const img: any = texture?.image;
-  if (!img || !img.width || !img.height) return null;
-  const k = Math.min(1, maxDim / Math.max(img.width, img.height));
-  const cw = Math.max(2, Math.round(img.width * k));
-  const ch = Math.max(2, Math.round(img.height * k));
-  const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-  try {
-    ctx.drawImage(img, 0, 0, cw, ch);
-  } catch {
-    return null;
-  }
-  let data: Uint8ClampedArray;
-  try {
-    data = ctx.getImageData(0, 0, cw, ch).data;
-  } catch {
-    return null;
-  }
-  const left = new Float32Array(ch);
-  const right = new Float32Array(ch);
-  let any = false;
-  for (let y = 0; y < ch; y++) {
-    let l = -1;
-    let r = -1;
-    for (let x = 0; x < cw; x++) {
-      const a = data[(y * cw + x) * 4 + 3];
-      if (a > 40) {
-        if (l < 0) l = x;
-        r = x;
+  const rows = 128;
+  const left = new Float32Array(rows);
+  const right = new Float32Array(rows);
+
+  // Procedural fallback silhouettes per category (normalized 0..1)
+  const proceduralSilhouette = (cat: Category, y: number, rows: number) => {
+    const t = y / (rows - 1);
+    switch (cat) {
+      case 'top':
+      case 'jacket': {
+        // Top/jacket: wider at shoulders, narrower at bust, narrow at waist, slight flare at hem
+        if (t < 0.1) return [0.25, 0.75]; // neckline
+        if (t < 0.25) return [0.1, 0.9]; // shoulders (widest)
+        if (t < 0.45) return [0.2, 0.8]; // bust
+        if (t < 0.7) return [0.35, 0.65]; // waist
+        return [0.3, 0.7]; // hem
+      }
+      case 'dress': {
+        // Dress: shoulders -> bust -> waist -> flared hips/hem
+        if (t < 0.1) return [0.25, 0.75]; // neckline
+        if (t < 0.25) return [0.1, 0.9]; // shoulders (widest)
+        if (t < 0.4) return [0.2, 0.8]; // bust
+        if (t < 0.6) return [0.35, 0.65]; // waist
+        if (t < 0.85) return [0.2, 0.8]; // hips
+        return [0.15, 0.85]; // flared hem
+      }
+      case 'bottom': {
+        // Pants/skirt: waist -> hips -> legs
+        if (t < 0.15) return [0.3, 0.7]; // waistband
+        if (t < 0.4) return [0.25, 0.75]; // hips
+        return [0.35, 0.65]; // legs/hem
+      }
+      default: {
+        return [0.3, 0.7];
       }
     }
-    left[y] = l < 0 ? 0 : l / cw;
-    right[y] = r < 0 ? 0 : r / cw;
-    if (l >= 0) any = true;
+  };
+
+  // Try to sample from actual texture
+  if (img && img.width && img.height) {
+    const k = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const cw = Math.max(2, Math.round(img.width * k));
+    const ch = Math.max(2, Math.round(img.height * k));
+    const canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (ctx) {
+      try {
+        ctx.drawImage(img, 0, 0, cw, ch);
+        const data = ctx.getImageData(0, 0, cw, ch).data;
+        let any = false;
+        for (let y = 0; y < ch; y++) {
+          let l = -1;
+          let r = -1;
+          for (let x = 0; x < cw; x++) {
+            const a = data[(y * cw + x) * 4 + 3];
+            if (a > 40) {
+              if (l < 0) l = x;
+              r = x;
+            }
+          }
+          left[y] = l < 0 ? 0 : l / cw;
+          right[y] = r < 0 ? 0 : r / cw;
+          if (l >= 0) any = true;
+        }
+        if (any) {
+          // Resample to standard row count
+          const resultLeft = new Float32Array(rows);
+          const resultRight = new Float32Array(rows);
+          for (let i = 0; i < rows; i++) {
+            const srcIdx = Math.min(ch - 1, Math.round(i * (ch - 1) / (rows - 1)));
+            resultLeft[i] = left[srcIdx];
+            resultRight[i] = right[srcIdx];
+          }
+          return { rows, left: resultLeft, right: resultRight };
+        }
+      } catch {
+        // CORS or other error - fall through to procedural
+      }
+    }
   }
-  if (!any) return null;
-  return { rows: ch, left, right };
+
+  // Procedural fallback: generate silhouette from category template
+  for (let y = 0; y < rows; y++) {
+    const [l, r] = proceduralSilhouette(category, y, rows);
+    left[y] = l;
+    right[y] = r;
+  }
+  return { rows, left, right };
 }
 
 // Locate garment landmarks as vertical fractions of the texture (0 = top of
@@ -321,7 +379,7 @@ function buildGarmentGeometry(
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const uv = geo.attributes.uv as THREE.BufferAttribute;
 
-  const silhouette = sampleSilhouette(texture);
+  const silhouette = sampleSilhouette(texture, 220, category);
   const fracs = silhouetteFractions(category, silhouette);
   const spanF = Math.max(fracs.hemRow - fracs.topRow, 1e-4);
   const bustF = (fracs.bustRow - fracs.topRow) / spanF;
@@ -334,14 +392,28 @@ function buildGarmentGeometry(
   const arcHalf = Math.PI - 0.15;
   const halfW = Math.max(w * 0.5, 1e-4);
 
-  // Reference: fit the garment's own width at the bust/hip row to the body.
-  const refWorldY = mapRowToWorldY(bustF, waistF, anchors, bustF);
+  // Reference: fit the garment at the appropriate anchor line.
+  // For tops/jackets: use shoulder line (where garment is anchored).
+  // For dresses: use bust line. For bottoms: use hip line.
+  let refFabricR: number;
+  if (category === 'top' || category === 'jacket') {
+    // Shoulder line is at the top of the fitted span (near topRow)
+    refFabricR = 0.0;
+  } else if (category === 'dress') {
+    refFabricR = bustF;
+  } else {
+    // bottom: use hip line (widest part)
+    refFabricR = 0.35;
+  }
+  const refWorldY = mapRowToWorldY(bustF, waistF, anchors, refFabricR);
   const refBodyHW = bodyHalfWidth(refWorldY, p) * 1.02;
+  const refRowIdx = silhouette ? clamp(Math.round(refFabricR * (silhouette.rows - 1)), 0, silhouette.rows - 1) : 0;
   const refSilHW = silhouette
-    ? (silhouette.right[clamp(Math.round(fracs.bustRow * (silhouette.rows - 1)), 0, silhouette.rows - 1)] -
-        silhouette.left[clamp(Math.round(fracs.bustRow * (silhouette.rows - 1)), 0, silhouette.rows - 1)]) * halfW
+    ? (silhouette.right[refRowIdx] - silhouette.left[refRowIdx]) * halfW
     : halfW;
   const fitScale = Math.max(refBodyHW, 0.02) / Math.max(refSilHW, 0.02);
+  // Clamp fitScale to prevent extreme stretching from anomalous silhouettes
+  const clampedFitScale = clamp(fitScale, 0.5, 1.5);
 
   const v = new THREE.Vector3();
   const uv2Arr: number[] = [];
@@ -377,7 +449,7 @@ function buildGarmentGeometry(
     // a diagonal shear once wrapped -- the mesh stays a symmetric arc, but
     // the pixels drawn on it are read from the wrong column at each height.
     const silCenterFrac = silhouette ? (silhouette.left[rowIdx] + silhouette.right[rowIdx]) / 2 : 0.5;
-    const fittedHW = silHW * fitScale;
+    const fittedHW = silHW * clampedFitScale;
     // Fit the body (never narrower than the torso) but keep the garment's
     // natural flare below the waist.
     let worldHW = Math.max(bodyHW * 1.02, fittedHW);
