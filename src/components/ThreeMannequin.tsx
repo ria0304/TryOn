@@ -578,8 +578,16 @@ const GarmentPlane: React.FC<{
 
   const rotation = useMemo(() => {
     const tilt = mapping.flat ? -Math.PI / 2 : 0;
-    return new THREE.Euler(tilt, 0, (placement.rotation || 0) * Math.PI / 180);
-  }, [placement.rotation, mapping.flat]);
+    // Wrap categories (top/dress/jacket/bottom) already algorithmically wrap
+    // the torso via buildGarmentGeometry's per-row cylindrical fit -- they
+    // must stay upright. Spinning that shell on Z (a control meant for flat
+    // 2D items like a rotated accessory sticker) tips the whole cone over,
+    // pinning the top near the neck while the rest swings out to one side.
+    // Any stray/legacy placement.rotation (e.g. from an outfit saved before
+    // the cylindrical wrap existed) must be ignored here.
+    const z = wrap ? 0 : (placement.rotation || 0) * Math.PI / 180;
+    return new THREE.Euler(tilt, 0, z);
+  }, [placement.rotation, mapping.flat, wrap]);
 
   const shading = useMemo(() => createShadingTexture(), []);
 
@@ -623,7 +631,29 @@ const GarmentPlane: React.FC<{
   );
 };
 
-// The procedural mannequin. Origin is at the center of the feet (y = 0).
+// The procedural mannequin: a torso-only dress form, like the adjustable
+// forms used in tailoring/garment fitting. IMPORTANT: this group is NOT
+// repositioned -- it stays in the exact same coordinate frame as before
+// (feet-space y, y=0 at floor level), because GarmentPlane and this mesh are
+// rendered as siblings in one shared <group> in MannequinModel with no
+// relative offset between them. Every BODY.*/torsoProfilePoints landmark is
+// an absolute y in that shared frame; shifting this mesh's origin without
+// also shifting every CATEGORY_MAPPING/BODY constant would desync garments
+// from the torso. The stand simply extends downward from BODY.hipY-ish
+// through y=0 using negative-Y geometry, so it reads as "torso planted on a
+// pole down to a base" without moving the torso itself.
+// Deliberately has no head, arms, or legs -- a dress form is a torso on a
+// stand, and every wrap-relevant category (top, dress, jacket, bottom) only
+// ever needs the torso silhouette (see bodyHalfWidth/torsoProfilePoints,
+// which this shares exactly), so nothing downstream depends on the limbs
+// that used to be here.
+const STAND_POLE_TOP_Y = torsoProfilePointsHipY();
+const STAND_BASE_Y = 0.02;
+
+function torsoProfilePointsHipY(): number {
+  return BODY.hipY - 0.15;
+}
+
 const MannequinMesh: React.FC<{ avatarType: AvatarType }> = ({ avatarType }) => {
   const p = PROPORTIONS[avatarType] || PROPORTIONS.neutral;
 
@@ -634,51 +664,34 @@ const MannequinMesh: React.FC<{ avatarType: AvatarType }> = ({ avatarType }) => 
 
   const torsoGeo = useMemo(() => new THREE.LatheGeometry(torsoProfile, 48), [torsoProfile]);
 
-  const armLength = BODY.shoulderY - 0.12 - 0.92;
-  const armY = (BODY.shoulderY - 0.1 + 0.92) / 2;
-  const armX = p.shoulderW * 0.5 + 0.02;
-  const legLength = BODY.hipY - BODY.legBaseY;
-  const legY = (BODY.hipY + BODY.legBaseY) / 2;
-  const legX = p.legR + 0.018;
+  const poleLength = Math.max(0.1, STAND_POLE_TOP_Y - STAND_BASE_Y);
+  const poleY = (STAND_POLE_TOP_Y + STAND_BASE_Y) / 2;
 
   const material = useMemo(
     () => new THREE.MeshStandardMaterial({ color: TORSO_COLOR, metalness: TORSO_METAL, roughness: TORSO_ROUGH }),
     []
   );
+  const standMaterial = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#3A3A38', metalness: 0.15, roughness: 0.55 }),
+    []
+  );
 
   return (
     <group>
-      {/* Torso */}
+      {/* Torso -- exact same geometry/position as the original mannequin */}
       <mesh name="mannequin-torso" geometry={torsoGeo} material={material} />
-      {/* Neck */}
-      <mesh position={[0, BODY.neckY, 0]} material={material}>
-        <cylinderGeometry args={[p.neckR, p.neckR, 0.1, 24]} />
+      {/* Neck cap -- dress forms end at the neckline, no head */}
+      <mesh position={[0, BODY.neckBaseY, 0]} material={material}>
+        <cylinderGeometry args={[p.neckR + 0.015, p.neckR + 0.02, 0.03, 24]} />
       </mesh>
-      {/* Head */}
-      <mesh position={[0, BODY.headY, 0]} material={material}>
-        <sphereGeometry args={[p.headR, 32, 32]} />
+      {/* Stand pole, from the base up to just inside the torso's hip line */}
+      <mesh position={[0, poleY, 0]} material={standMaterial}>
+        <cylinderGeometry args={[0.028, 0.028, poleLength, 20]} />
       </mesh>
-      {/* Arms */}
-      {[1, -1].map((s) => (
-        <mesh key={`arm-${s}`} position={[armX * s, armY, 0]} rotation={[0, 0, s * 0.12]} material={material}>
-          <capsuleGeometry args={[p.armR, armLength, 6, 12]} />
-        </mesh>
-      ))}
-      {/* Legs */}
-      {[1, -1].map((s) => (
-        <mesh key={`leg-${s}`} position={[legX * s, legY, 0]} material={material}>
-          <cylinderGeometry args={[p.legR, p.legR * 0.78, legLength, 20]} />
-        </mesh>
-      ))}
-      {/* Feet */}
-      {[1, -1].map((s) => (
-        <mesh key={`foot-${s}`} position={[legX * s, BODY.footY, 0.09]} material={material}>
-          <boxGeometry args={[0.13, 0.05, 0.3]} />
-        </mesh>
-      ))}
-      {/* Pedestal base */}
-      <mesh position={[0, 0.02, 0]} material={material}>
-        <cylinderGeometry args={[0.19, 0.23, 0.04, 48]} />
+      {/* Pedestal base -- wider and flatter than the old one, since there
+          are no legs to visually ground the form */}
+      <mesh position={[0, STAND_BASE_Y - 0.02, 0]} material={standMaterial}>
+        <cylinderGeometry args={[0.24, 0.29, 0.04, 48]} />
       </mesh>
     </group>
   );
@@ -794,18 +807,29 @@ class GlbBoundary extends React.Component<
   }
 }
 
+// Always the torso-only dress form -- the rigged GLB avatars are no longer
+// attempted. Garment wrapping (bodyHalfWidth, silhouetteFractions, the whole
+// WRAP_CATEGORIES shell-building path) is tuned against MannequinMesh's
+// exact torso lathe geometry; the GLB path's skinned bounds don't
+// necessarily agree with those landmarks even when the file loads without
+// throwing, which is what was producing garments that don't actually wrap.
+// GlbMannequin/GlbBoundary/skinnedBounds/normalizeMannequin are kept in this
+// file (unused) rather than deleted, in case GLB avatars come back later
+// with landmark-accurate normalization.
 const MannequinAvatar: React.FC<{ avatarType: AvatarType }> = ({ avatarType }) => (
-  <GlbBoundary avatarType={avatarType}>
-    <GlbMannequin avatarType={avatarType} />
-  </GlbBoundary>
+  <MannequinMesh avatarType={avatarType} />
 );
 
 const MannequinModel: React.FC<{ state: OutfitBuilderState }> = ({ state }) => {
   const avatarType = state.avatar || 'neutral';
   const categories: Category[] = ['top', 'bottom', 'dress', 'jacket', 'shoes', 'bag', 'jewellery', 'accessories'];
 
+  // Torso-only dress forms span roughly -0.02 (stand base) to 1.46
+  // (neckBaseY), vertical center ~0.72 -- vs. the old feet-to-head figure's
+  // center ~0.885 (which used -0.9). Recentered the same way for the new
+  // extent so the form sits mid-frame instead of low.
   return (
-    <group position={[0, -0.9, 0]}>
+    <group position={[0, -0.72, 0]}>
       <MannequinAvatar avatarType={avatarType} />
       {categories.map((cat) => {
         const garment = state[cat];
@@ -837,7 +861,11 @@ export const ThreeMannequin: React.FC<ThreeMannequinProps> = ({ state, onCanvasR
         gl={{ preserveDrawingBuffer: true }}
         onCreated={onSceneCreated}
       >
-        <PerspectiveCamera makeDefault position={[0, 0.1, 3.2]} fov={40} />
+        {/* Pulled in from 3.2 -- the torso-only form is ~84% the vertical
+            span of the old full-height figure, so the default view sat too
+            far back and left it looking small. Still well inside the
+            existing OrbitControls minDistance/maxDistance (1.5 / 5) below. */}
+        <PerspectiveCamera makeDefault position={[0, 0.1, 2.6]} fov={40} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[3, 4, 4]} intensity={1.4} />
         <directionalLight position={[-3, 2, -3]} intensity={0.35} />
