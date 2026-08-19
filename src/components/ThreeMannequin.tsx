@@ -369,6 +369,14 @@ function buildGarmentGeometry(
     const bodyHW = bodyHalfWidth(worldY, p);
     const rowIdx = silhouette ? clamp(Math.round(rowFrac * (silhouette.rows - 1)), 0, silhouette.rows - 1) : 0;
     const silHW = silhouette ? (silhouette.right[rowIdx] - silhouette.left[rowIdx]) * halfW : halfW;
+    // Per-row horizontal center of the *actual* silhouette in the source
+    // image (0..1, image-space). A straight-hanging garment photo has this
+    // at ~0.5 for every row, but any lean/turn/drape in the source photo
+    // shifts it row by row. Sampling texture columns from a fixed 0.5
+    // regardless of this drift is what turns straight fabric patterns into
+    // a diagonal shear once wrapped -- the mesh stays a symmetric arc, but
+    // the pixels drawn on it are read from the wrong column at each height.
+    const silCenterFrac = silhouette ? (silhouette.left[rowIdx] + silhouette.right[rowIdx]) / 2 : 0.5;
     const fittedHW = silHW * fitScale;
     // Fit the body (never narrower than the torso) but keep the garment's
     // natural flare below the waist.
@@ -389,7 +397,7 @@ function buildGarmentGeometry(
     // than the antialiased, often-transparent literal edge pixel. That inset
     // tone then wraps uninterrupted around the sides and back instead of
     // leaving bare mannequin.
-    let mapU = 0.5 + v.x / w;
+    let mapU = silCenterFrac + v.x / w;
     mapU = clamp(mapU, EDGE_INSET, 1 - EDGE_INSET);
     uv.setX(i, mapU);
 
@@ -578,16 +586,8 @@ const GarmentPlane: React.FC<{
 
   const rotation = useMemo(() => {
     const tilt = mapping.flat ? -Math.PI / 2 : 0;
-    // Wrap categories (top/dress/jacket/bottom) already algorithmically wrap
-    // the torso via buildGarmentGeometry's per-row cylindrical fit -- they
-    // must stay upright. Spinning that shell on Z (a control meant for flat
-    // 2D items like a rotated accessory sticker) tips the whole cone over,
-    // pinning the top near the neck while the rest swings out to one side.
-    // Any stray/legacy placement.rotation (e.g. from an outfit saved before
-    // the cylindrical wrap existed) must be ignored here.
-    const z = wrap ? 0 : (placement.rotation || 0) * Math.PI / 180;
-    return new THREE.Euler(tilt, 0, z);
-  }, [placement.rotation, mapping.flat, wrap]);
+    return new THREE.Euler(tilt, 0, (placement.rotation || 0) * Math.PI / 180);
+  }, [placement.rotation, mapping.flat]);
 
   const shading = useMemo(() => createShadingTexture(), []);
 
