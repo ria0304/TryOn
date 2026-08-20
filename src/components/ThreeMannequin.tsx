@@ -363,7 +363,7 @@ function buildGarmentGeometry(
   texture: THREE.Texture,
   w: number,
   h: number,
-  centerY: number,
+  yOffset: number,
   category: Category,
   avatarType: AvatarType,
   cols = 72,
@@ -459,7 +459,14 @@ function buildGarmentGeometry(
     const t = clamp(v.x / radius, -arcHalf, arcHalf);
     const x3 = radius * Math.sin(t);
     const z3 = radius * Math.cos(t);
-    pos.setXYZ(i, x3, worldY - centerY, z3);
+    // worldY is already absolute (mannequin-local) height from the garment
+    // anchors; the mesh itself is rendered at y=0 for wrap categories (see
+    // GarmentPlane), so yOffset -- the user's vertical placement-slider
+    // adjustment -- must be baked in here directly. Previously this instead
+    // subtracted the mesh's own position.y (which equalled mapping.y +
+    // yOffset) and let the mesh's position.y re-add it, which cancelled out
+    // to a no-op: the slider had zero visible effect on wrapped garments.
+    pos.setXYZ(i, x3, worldY + yOffset, z3);
 
     // Texture u-coordinate: mapped against the garment's *actual* photo
     // width (w), not the wider wrap geometry (totalW). Columns inside the
@@ -650,11 +657,16 @@ const GarmentPlane: React.FC<{
     return { w: Math.max(w, 0.01), h: Math.max(h, 0.01) };
   }, [mapping, placement.scale, texture]);
 
+  // Raw slider offset in meters, kept separate from `pos` so wrap geometry
+  // can bake it directly into vertex Y (see buildGarmentGeometry) instead of
+  // going through mesh.position.y, which for wrap categories is fixed at 0
+  // below since the shell's absolute height is already computed per-vertex.
+  const yOffsetM = useMemo(() => (50 - (placement.y ?? 50)) / 50 * 0.18, [placement.y]);
+
   const pos = useMemo(() => {
     const xOffset = ((placement.x ?? 50) - 50) / 50 * 0.18;
-    const yOffset = (50 - (placement.y ?? 50)) / 50 * 0.18;
-    return new THREE.Vector3(mapping.x + xOffset, mapping.y + yOffset, wrap ? 0.015 : mapping.z);
-  }, [mapping, placement.x, placement.y, wrap]);
+    return new THREE.Vector3(mapping.x + xOffset, mapping.y + yOffsetM, wrap ? 0.015 : mapping.z);
+  }, [mapping, placement.x, yOffsetM, wrap]);
 
   const rotation = useMemo(() => {
     const tilt = mapping.flat ? -Math.PI / 2 : 0;
@@ -664,15 +676,19 @@ const GarmentPlane: React.FC<{
   const shading = useMemo(() => createShadingTexture(), []);
 
   const wrappedGeo = useMemo(
-    () => (wrap ? buildGarmentGeometry(texture, planeSize.w, planeSize.h, pos.y, category, avatarType) : null),
-    [wrap, texture, planeSize.w, planeSize.h, pos.y, category, avatarType]
+    () => (wrap ? buildGarmentGeometry(texture, planeSize.w, planeSize.h, yOffsetM, category, avatarType) : null),
+    [wrap, texture, planeSize.w, planeSize.h, yOffsetM, category, avatarType]
   );
 
   if (!texture) return null;
 
   if (wrap && wrappedGeo) {
+    // y is baked into the geometry's vertices (absolute mannequin-local
+    // height + yOffsetM), so the mesh itself stays at y=0 -- do not also
+    // apply pos.y here or the vertical placement slider is double-applied
+    // in one direction and cancelled in the other, same bug as before.
     return (
-      <mesh name={`garment-${category}`} geometry={wrappedGeo} position={[pos.x, pos.y, pos.z]} rotation={rotation}>
+      <mesh name={`garment-${category}`} geometry={wrappedGeo} position={[pos.x, 0, pos.z]} rotation={rotation}>
         <meshStandardMaterial
           map={texture}
           aoMap={shading}
