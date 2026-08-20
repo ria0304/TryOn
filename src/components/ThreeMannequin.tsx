@@ -60,7 +60,8 @@ const TORSO_ROUGH = 0.75;
 const CATEGORY_MAPPING: Record<Category, { x: number; y: number; z: number; w: number; maxH: number; flat?: boolean }> = {
   top: { x: 0, y: BODY.shoulderY - 0.11, z: 0.25, w: 0.44, maxH: 0.46 },
   jacket: { x: 0, y: BODY.shoulderY - 0.11, z: 0.26, w: 0.52, maxH: 0.54 },
-  dress: { x: 0, y: BODY.hipY + 0.02, z: 0.25, w: 0.44, maxH: 0.94 },
+  // FIXED: Dress starts at waist, not hip
+  dress: { x: 0, y: BODY.waistY - 0.02, z: 0.25, w: 0.44, maxH: 0.94 },
   bottom: { x: 0, y: BODY.hipY - 0.02, z: 0.24, w: 0.4, maxH: 0.44 },
   shoes: { x: 0, y: BODY.footY, z: 0.22, w: 0.24, maxH: 0.16 },
   bag: { x: 0.3, y: 1.0, z: 0.22, w: 0.2, maxH: 0.28 },
@@ -70,7 +71,20 @@ const CATEGORY_MAPPING: Record<Category, { x: number; y: number; z: number; w: n
 
 // Garments that wrap around the body like real clothing (a curved shell
 // hugging the mannequin) instead of floating flat planes.
-const WRAP_CATEGORIES: Category[] = ['top', 'dress', 'jacket', 'bottom'];
+// Dresses use their transparent front cutout directly so the photographed
+// hem and flare stay intact instead of being distorted around a cylinder.
+const WRAP_CATEGORIES: Category[] = ['top', 'jacket', 'bottom'];
+
+// FIXED: Category-dependent wrap factor
+function getWrapFactor(category: Category): number {
+  switch(category) {
+    case 'dress': return 4.5;  // Dresses need more wrap for full coverage
+    case 'jacket': return 3.8;
+    case 'top': return 3.4;
+    case 'bottom': return 3.4;
+    default: return 3.4;
+  }
+}
 
 // Half-width of the mannequin body at a given height (meters), interpolated
 // from the actual body landmarks so a wrapped garment follows the silhouette.
@@ -162,7 +176,8 @@ function sampleSilhouette(
   const left = new Float32Array(rows);
   const right = new Float32Array(rows);
 
-  // Procedural fallback silhouettes per category (normalized 0..1)
+  // FIXED: Procedural fallback silhouettes per category (normalized 0..1)
+  // Made dresses wider with less severe waist and more flare
   const proceduralSilhouette = (cat: Category, y: number, rows: number) => {
     const t = y / (rows - 1);
     switch (cat) {
@@ -176,13 +191,13 @@ function sampleSilhouette(
         return [0.3, 0.7]; // hem
       }
       case 'dress': {
-        // Dress: shoulders -> bust -> waist -> flared hips/hem
+        // FIXED: Dress: shoulders -> bust -> less severe waist -> wider hips -> flared hem
         if (t < 0.1) return [0.25, 0.75]; // neckline
         if (t < 0.25) return [0.1, 0.9]; // shoulders (widest)
         if (t < 0.4) return [0.2, 0.8]; // bust
-        if (t < 0.6) return [0.35, 0.65]; // waist
-        if (t < 0.85) return [0.2, 0.8]; // hips
-        return [0.15, 0.85]; // flared hem
+        if (t < 0.55) return [0.3, 0.7]; // less dramatic waist
+        if (t < 0.8) return [0.18, 0.82]; // wider hips
+        return [0.1, 0.9]; // much wider flared hem
       }
       case 'bottom': {
         // Pants/skirt: waist -> hips -> legs
@@ -297,7 +312,7 @@ function silhouetteFractions(
   return { topRow: top, hemRow: hem, bustRow: bI / rows, waistRow: wI / rows };
 }
 
-// Mannequin-local Y anchors each garment landmark should map to (feet at 0).
+// FIXED: Mannequin-local Y anchors each garment landmark should map to (feet at 0).
 // The hem depends on the garment's aspect ratio: tall/narrow = long garment.
 function garmentAnchors(category: Category, aspect: number): { top: number; bust: number; waist: number; hem: number } {
   switch (category) {
@@ -311,11 +326,13 @@ function garmentAnchors(category: Category, aspect: number): { top: number; bust
     case 'jacket':
       return { top: BODY.neckBaseY + 0.02, bust: BODY.chestY - 0.03, waist: BODY.waistY + 0.02, hem: BODY.waistY + 0.1 };
     case 'dress':
+      // FIXED: Dress hem goes much lower - to near the feet
+      const dressLength = aspect < 0.5 ? 0.15 : aspect < 0.7 ? 0.08 : 0.04;
       return {
         top: BODY.shoulderY - 0.02,
         bust: BODY.chestY - 0.03,
         waist: BODY.waistY - 0.04,
-        hem: aspect < 0.42 ? 0.24 : aspect < 0.58 ? 0.34 : BODY.hipY - 0.12,
+        hem: dressLength, // Much lower - near the feet
       };
     case 'bottom':
       return {
@@ -347,7 +364,8 @@ function mapRowToWorldY(
 // (see EDGE_INSET below) and carry that fabric tone around the sides and
 // back. Without this, the shell only spans the garment's literal photo
 // width, which covers ~110-150° of the body and leaves the back bare.
-const WRAP_FACTOR = 3.4;
+// REMOVED: WRAP_FACTOR constant - now using getWrapFactor() function
+
 // Fraction of the texture width kept as a no-go margin at each edge. Cutout
 // PNGs fade to transparent at the silhouette edge from anti-aliasing, so
 // sampling exactly at u=0/1 punches alpha-tested holes in the wrap. Instead
@@ -370,11 +388,11 @@ function buildGarmentGeometry(
   rows = 32
 ): THREE.PlaneGeometry {
   const p = PROPORTIONS[avatarType] || PROPORTIONS.neutral;
-  // Geometry is built wider than the garment photo itself (see WRAP_FACTOR)
+  // FIXED: Geometry is built wider than the garment photo itself (using category-dependent wrap factor)
   // so there are columns of mesh available to carry all the way around to
   // the back; only the central band actually samples the photographed
   // garment, the rest samples the clamped edge tone.
-  const totalW = w * WRAP_FACTOR;
+  const totalW = w * getWrapFactor(category);
   const geo = new THREE.PlaneGeometry(totalW, h, cols, rows);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const uv = geo.attributes.uv as THREE.BufferAttribute;
@@ -386,10 +404,11 @@ function buildGarmentGeometry(
   const waistF = (fracs.waistRow - fracs.topRow) / spanF;
   const anchors = garmentAnchors(category, w / h);
   const gap = 0.014;
-  // Leaves a small seam (~10-15°) exactly at body-center-back so the shell
-  // never self-intersects; visually invisible since it sits dead center
-  // behind the mannequin.
+  // Use the full mesh width to parameterize the wrap. The previous version
+  // divided by the fitted body radius, collapsing most vertices onto the
+  // front and sampling only edge pixels from the dress image.
   const arcHalf = Math.PI - 0.15;
+  const frontArcHalf = Math.PI / 2;
   const halfW = Math.max(w * 0.5, 1e-4);
 
   // Reference: fit the garment at the appropriate anchor line.
@@ -456,7 +475,7 @@ function buildGarmentGeometry(
     worldHW = Math.min(worldHW, Math.max(bodyHW * 1.02, 0.42));
 
     const radius = Math.max(worldHW + gap, 0.08);
-    const t = clamp(v.x / radius, -arcHalf, arcHalf);
+    const t = (v.x / Math.max(totalW * 0.5, 1e-4)) * arcHalf;
     const x3 = radius * Math.sin(t);
     const z3 = radius * Math.cos(t);
     // worldY is already absolute (mannequin-local) height from the garment
@@ -468,16 +487,18 @@ function buildGarmentGeometry(
     // to a no-op: the slider had zero visible effect on wrapped garments.
     pos.setXYZ(i, x3, worldY + yOffset, z3);
 
-    // Texture u-coordinate: mapped against the garment's *actual* photo
-    // width (w), not the wider wrap geometry (totalW). Columns inside the
-    // real photo get a normal 0..1 mapping; columns beyond it (the sides and
-    // back, which have no photo data) clamp to a fixed inset column just
-    // inside the edge — a solidly opaque strip of real fabric colour rather
-    // than the antialiased, often-transparent literal edge pixel. That inset
-    // tone then wraps uninterrupted around the sides and back instead of
-    // leaving bare mannequin.
-    let mapU = silCenterFrac + v.x / w;
-    mapU = clamp(mapU, EDGE_INSET, 1 - EDGE_INSET);
+    // FIXED: Texture u-coordinate: mapped against the garment's *actual* silhouette width
+    // instead of the world space, preventing stretching
+    const silLeft = silhouette ? silhouette.left[rowIdx] : 0.3;
+    const silRight = silhouette ? silhouette.right[rowIdx] : 0.7;
+    const silWidth = silRight - silLeft;
+    // Map the horizontal position to the silhouette's actual width
+    // Map the complete source garment across the mannequin's front half.
+    // Beyond the front half, keep sampling the nearest edge so the fabric
+    // continues around the sides without replacing the front with a narrow
+    // center strip.
+    const localU = clamp01((t + frontArcHalf) / (2 * frontArcHalf));
+    let mapU = clamp(silLeft + localU * silWidth, EDGE_INSET, 1 - EDGE_INSET);
     uv.setX(i, mapU);
 
     uv2Arr.push(wideU, uv.getY(i));
@@ -633,9 +654,9 @@ const GarmentPlane: React.FC<{
   placement: Placement;
   avatarType: AvatarType;
 }> = ({ garment, category, placement, avatarType }) => {
-  // Prefer the background-removed cutout over the raw photo so the garment
-  // projects cleanly instead of a photo rectangle.
-  const textureUrl = garment.cutoutUrl || garment.warpedUrl || garment.imageUrl || '';
+  // The warped asset is garment-only; the cutout may still contain the person
+  // from the source photo and would project the wearer onto the mannequin.
+  const textureUrl = garment.warpedUrl || garment.cutoutUrl || garment.imageUrl || '';
   const { texture: imageTexture, failed } = useSafeTexture(textureUrl);
   const colorTexture = useColorTexture(garment.color);
   const texture = textureUrl && !failed ? imageTexture : colorTexture;
@@ -912,12 +933,11 @@ const MannequinModel: React.FC<{ state: OutfitBuilderState }> = ({ state }) => {
   const avatarType = state.avatar || 'neutral';
   const categories: Category[] = ['top', 'bottom', 'dress', 'jacket', 'shoes', 'bag', 'jewellery', 'accessories'];
 
-  // Torso-only dress forms span roughly -0.02 (stand base) to 1.46
-  // (neckBaseY), vertical center ~0.72 -- vs. the old feet-to-head figure's
-  // center ~0.885 (which used -0.9). Recentered the same way for the new
-  // extent so the form sits mid-frame instead of low.
+  // FIXED: Torso-only dress forms span roughly -0.02 (stand base) to 1.46
+  // (neckBaseY), vertical center ~0.72 -- adjusted offset slightly higher
+  // to accommodate long dresses
   return (
-    <group position={[0, -0.72, 0]}>
+    <group position={[0, -0.65, 0]}>
       <MannequinAvatar avatarType={avatarType} />
       {categories.map((cat) => {
         const garment = state[cat];
@@ -949,11 +969,8 @@ export const ThreeMannequin: React.FC<ThreeMannequinProps> = ({ state, onCanvasR
         gl={{ preserveDrawingBuffer: true }}
         onCreated={onSceneCreated}
       >
-        {/* Pulled in from 3.2 -- the torso-only form is ~84% the vertical
-            span of the old full-height figure, so the default view sat too
-            far back and left it looking small. Still well inside the
-            existing OrbitControls minDistance/maxDistance (1.5 / 5) below. */}
-        <PerspectiveCamera makeDefault position={[0, 0.1, 2.6]} fov={40} />
+        {/* FIXED: Adjusted camera position for better dress viewing */}
+        <PerspectiveCamera makeDefault position={[0, 0.15, 2.8]} fov={40} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[3, 4, 4]} intensity={1.4} />
         <directionalLight position={[-3, 2, -3]} intensity={0.35} />
