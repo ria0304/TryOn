@@ -71,9 +71,13 @@ const CATEGORY_MAPPING: Record<Category, { x: number; y: number; z: number; w: n
 
 // Garments that wrap around the body like real clothing (a curved shell
 // hugging the mannequin) instead of floating flat planes.
-// Dresses use their transparent front cutout directly so the photographed
-// hem and flare stay intact instead of being distorted around a cylinder.
-const WRAP_CATEGORIES: Category[] = ['top', 'jacket', 'bottom'];
+// Dresses ARE wrapped too: getWrapFactor, proceduralSilhouette, and
+// garmentAnchors all already have dedicated 'dress' cases (wrap factor 4.5,
+// hem anchored near the feet, etc.) specifically so a dress renders as a
+// fitted 3D shell instead of a small flat rectangle hovering at waist
+// height. Leaving 'dress' out of this list is what produces a tiny,
+// unfitted cutout instead of an actual worn-looking dress.
+const WRAP_CATEGORIES: Category[] = ['top', 'jacket', 'bottom', 'dress'];
 
 // FIXED: Category-dependent wrap factor
 function getWrapFactor(category: Category): number {
