@@ -1,0 +1,8 @@
+{
+  "name": "TryOn",
+  "description": "Virtual outfit builder, 3D mannequin styling, and cut-out fashion inspiration fitting room",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
