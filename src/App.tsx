@@ -210,45 +210,48 @@ function App() {
       .finally(() => setIsAnalyzing(false));
   };
 
-  // Handle Custom Upload from Local File
+  // Handle Custom Upload from Local File (used by the outfit-builder
+  // "Custom Upload" drop zone). This used to read the file as a base64
+  // dataURL and equip it onto the mannequin directly via
+  // setSelectedGarment/setCurrentTextureUrl -- it never called the backend
+  // upload endpoint and never touched `garments` state, so the piece was
+  // never saved to My Garments and vanished on refresh/tab switch. Routed
+  // through the same real pipeline UploadModal uses (server cutout/canonical
+  // asset -> handleAddGarment) so it's saved to the wardrobe first and
+  // equipping the mannequin is a side effect of that save, same as every
+  // other garment-add path in the app.
   const handleUploadCustomGarment = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      if (dataUrl) {
-        const customItem: GarmentItem = {
-          id: `custom_${Date.now()}`,
+    setIsAnalyzing(true);
+    api
+      .uploadGarment(file, false)
+      .then((uploadRes) => {
+        const imageUrl = uploadRes?.url || '';
+        const cutoutUrl = uploadRes?.cutoutUrl || uploadRes?.url || '';
+        const newGarment: Garment = {
+          id: `custom-${Date.now()}`,
           name: file.name.replace(/\.[^/.]+$/, ''),
-          category: 'Custom Upload',
-          imageUrl: dataUrl,
-          strapType: 'unknown',
-          backStyle: 'undetermined',
-          silhouette: 'a_line_dress',
-          fabricFinish: 'silk_satin',
-          recommendedWrap: 1.0,
-          backDeterminationStatus: 'ambiguous',
+          category: (uploadRes?.suggestedCategory as Garment['category']) || 'dress',
+          color: uploadRes?.suggestedColorHex || '#000000',
+          style: 'custom',
+          fabric: uploadRes?.suggestedFabric,
+          imageUrl,
+          cutoutUrl,
+          warpedUrl: uploadRes?.warpedUrl,
+          canonicalAsset: uploadRes?.canonicalAsset,
+          isCustom: true,
+          createdAt: new Date().toISOString(),
         };
-        setSelectedGarment(customItem);
-        setCurrentTextureUrl(dataUrl);
-        setCurrentBackTextureUrl(null);
-
-        setIsAnalyzing(true);
-        ApiClient.analyzeGarment(dataUrl)
-          .then((res) => {
-            setAnalysis(res);
-            setStrapType(res.strapType);
-            setBackStyle(res.backStyle);
-            setIsBackDetermined(res.isBackDetermined);
-            setViewerSettings((prev) => ({
-              ...prev,
-              liningColor: res.garmentColor || prev.liningColor,
-            }));
-          })
-          .catch((err) => console.error(err))
-          .finally(() => setIsAnalyzing(false));
-      }
-    };
-    reader.readAsDataURL(file);
+        // Saves to My Garments (+ backend persistence) and equips the
+        // mannequin as a consequence -- see handleAddGarment above.
+        handleAddGarment(newGarment);
+      })
+      .catch((err) => {
+        console.error('Garment upload failed:', err);
+        setLoadError(
+          `Couldn't upload "${file.name}" (${err instanceof Error ? err.message : 'server error'}) — it wasn't saved to your wardrobe.`
+        );
+      })
+      .finally(() => setIsAnalyzing(false));
   };
 
   // Handle Stable Diffusion Generated Textures
