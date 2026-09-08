@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Category, Garment, UploadResult, StrapType, FabricFinishType } from '../types';
 import {
-  Upload, Check, Sparkles, RefreshCw, X, Info, Palette, Eye, Shirt, Scissors
+  Upload, Check, Sparkles, RefreshCw, X, Palette, Eye, Shirt
 } from 'lucide-react';
 import { uploadGarment } from '../lib/api';
 import { segmentGarmentFromImage } from '../lib/garmentSegmentation';
@@ -190,8 +190,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [fabric, setFabric] = useState<string | undefined>(undefined);
   const [strapType, setStrapType] = useState<StrapType>('wide_straps');
   const [singleImagePreview, setSingleImagePreview] = useState<string | null>(null);
+  // isolatedCutoutUrl is still computed and used internally as the garment's
+  // cutout asset (see handleSingleSubmit) -- it's just no longer exposed as a
+  // user-facing preview toggle.
   const [isolatedCutoutUrl, setIsolatedCutoutUrl] = useState<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<'isolated' | 'original'>('isolated');
   const [singleImageFile, setSingleImageFile] = useState<File | null>(null);
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
@@ -417,7 +419,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             {singleImagePreview ? (
               <div className="w-full h-full p-4 relative group flex flex-col items-center justify-center">
                 <img
-                  src={previewMode === 'isolated' && isolatedCutoutUrl ? isolatedCutoutUrl : singleImagePreview}
+                  src={singleImagePreview}
                   alt="Garment Preview"
                   className="w-full h-full object-contain rounded-2xl drop-shadow-md"
                 />
@@ -443,38 +445,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Extracted Color Swatches & Material Badge */}
           {singleImagePreview && (
             <div className="space-y-3">
-              {/* Isolated Garment View Switcher */}
-              <div className="flex items-center justify-between bg-[#FFF0F4] border border-[#F3D3DB] rounded-2xl p-2">
-                <div className="flex items-center gap-1.5 px-2">
-                  <Scissors className="w-3.5 h-3.5 text-[#E97A9A]" />
-                  <span className="text-[11px] font-bold text-[#2F2A2E]">Preview Mode:</span>
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewMode('isolated')}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-xl transition-all cursor-pointer ${
-                      previewMode === 'isolated'
-                        ? 'bg-[#E97A9A] text-white shadow-xs'
-                        : 'text-[#6D6670] hover:text-[#2F2A2E]'
-                    }`}
-                  >
-                    Garment Only Cutout
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewMode('original')}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-xl transition-all cursor-pointer ${
-                      previewMode === 'original'
-                        ? 'bg-[#E97A9A] text-white shadow-xs'
-                        : 'text-[#6D6670] hover:text-[#2F2A2E]'
-                    }`}
-                  >
-                    Original Photo
-                  </button>
-                </div>
-              </div>
-
               <div className="bg-[#FFF5F8] border border-[#F3D3DB] rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-[#2F2A2E] flex items-center gap-1.5">
@@ -520,12 +490,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           )}
 
-          <div className="flex items-start gap-3 p-3.5 bg-blue-50 rounded-2xl border border-blue-100">
-            <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-blue-700 leading-relaxed">
-              <strong>Exact Fit Guarantee:</strong> The screenshot is mapped onto the 3D dressform with 360° tailored draping, genuine fabric sheen, and 3D shoulder straps matching your screenshot.
-            </p>
-          </div>
         </div>
 
         {/* Right: Category, Material & Silhouette Confirmation */}
@@ -622,7 +586,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             {isDetecting && (
               <div className="flex items-center gap-3 p-3.5 bg-[#FFF8FA] rounded-2xl border border-[#F3D3DB]">
                 <RefreshCw className="w-4 h-4 text-[#E97A9A] animate-spin" />
-                <span className="text-xs font-medium text-[#2F2A2E]">Analyzing screenshot material & colors...</span>
+                <span className="text-xs font-medium text-[#2F2A2E]">Analyzing...</span>
               </div>
             )}
           </div>
@@ -640,12 +604,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Draping Outfit in 3D...</span>
+                  <span>Saving to My Garments...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 text-[#E97A9A]" />
-                  <span>Equip to 3D Mannequin & Save</span>
+                  <span>Save to My Garments</span>
                 </>
               )}
             </button>
