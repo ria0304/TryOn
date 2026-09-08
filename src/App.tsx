@@ -446,6 +446,28 @@ function App() {
       });
   }, [onSelectBuilderGarment]);
 
+  // Save-only variant for the standalone "Upload Garment" page: adds the
+  // garment to the wardrobe and persists it to the backend, same as
+  // handleAddGarment, but deliberately skips equipping it onto the outfit
+  // builder / 3D mannequin. That page's job is to add to My Garments, not to
+  // also change what's currently on the mannequin.
+  const handleSaveGarmentToWardrobe = useCallback((garment: Garment) => {
+    setGarments((prev) => [garment, ...prev]);
+
+    api
+      .createGarment(garment)
+      .then((saved) => {
+        setGarments((prev) => prev.map((g) => (g.id === garment.id ? saved : g)));
+      })
+      .catch((err) => {
+        console.warn('Failed to persist garment to backend:', err);
+        setGarments((prev) => prev.filter((g) => g.id !== garment.id));
+        setLoadError(
+          `Couldn't save "${garment.name}" (${err instanceof Error ? err.message : 'server error'}) — it wasn't added to your wardrobe.`
+        );
+      });
+  }, []);
+
   const handleDeleteGarment = useCallback((id: string) => {
     setGarments((prev) => prev.filter((g) => g.id !== id));
     if (!id.startsWith('custom-')) return;
@@ -707,8 +729,8 @@ function App() {
           {activeTab === 'upload' && (
             <div className="bg-white rounded-3xl p-6 text-[#2F2A2E] shadow-2xl border border-white/20 animate-fade-in">
               <UploadModal
-                onAddGarment={handleAddGarment}
-                onSuccess={() => setActiveTab('home')}
+                onAddGarment={handleSaveGarmentToWardrobe}
+                onSuccess={() => setActiveTab('garments')}
                 preloadedFileUrl={preloadedFileUrl}
               />
             </div>
