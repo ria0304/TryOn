@@ -27,10 +27,15 @@ class Garment(Base):
     category = Column(String, nullable=False, index=True)
     color = Column(String, nullable=False, default="#000000")
     style = Column(String, nullable=False, default="custom")
+    fabric = Column(String, nullable=True)
     is_custom = Column(Boolean, nullable=False, default=True)
     image_url = Column(String, nullable=True)
     cutout_url = Column(String, nullable=True)
     warped_url = Column(String, nullable=True)
+    # Canonical, non-synthetic garment asset metadata. The RGBA source itself
+    # lives at cutout_url; this records its exact alpha-mask URL, contour,
+    # bounds, extraction confidence and review warnings.
+    canonical_asset = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     owner = relationship("User", back_populates="garments")
