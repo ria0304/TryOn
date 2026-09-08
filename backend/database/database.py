@@ -30,3 +30,6 @@ def init_db():
         if "canonical_asset" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE garments ADD COLUMN canonical_asset JSON"))
+        if "fabric" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE garments ADD COLUMN fabric VARCHAR"))
